@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Qwen3-TTS</string>
+    <string name="import_bundle_zip">Import Bundle ZIP</string>
+</resources>

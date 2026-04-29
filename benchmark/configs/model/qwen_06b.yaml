@@ -1,0 +1,8 @@
+_target_: quality.model_adapters.qwen_adapter.QwenTTSAdapter
+model_id: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+voice: Vivian
+gpu_device: "0"
+dtype: bfloat16
+language_map:
+  ru: Russian
+  en: English

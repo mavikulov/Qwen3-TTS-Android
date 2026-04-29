@@ -1,0 +1,19 @@
+FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04 AS dev
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+ENV TZ="Europe/Moscow"
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt update -y && \
+    apt install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswresample-dev && \
+    ldconfig
+
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH=$VIRTUAL_ENV/bin:$PATH
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENV UV_LINK_MODE=copy
+
+WORKDIR /app
+
+COPY . .
+
+CMD ["bash"]

@@ -1,0 +1,12 @@
+numpy
+soundfile
+torch
+qwen-tts
+matplotlib
+hydra-core
+datasets
+jiwer
+faster-whisper
+torchmetrics
+tqdm
+

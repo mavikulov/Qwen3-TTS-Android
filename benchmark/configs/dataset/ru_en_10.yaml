@@ -1,0 +1,16 @@
+manifests_dir: benchmark/data/manifests
+ru_manifest_name: tonebooksplus_validation_ru_10.json
+en_manifest_name: librispeech_asr_en_10.json
+recreate_manifests: false
+
+ru:
+  hf_dataset: Vikhrmodels/ToneBooksPlus
+  split: validation
+  count: 10
+  id_field: id
+
+en:
+  hf_dataset: openslr/librispeech_asr
+  split: validation.clean
+  count: 10
+  id_field: id

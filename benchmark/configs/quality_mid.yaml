@@ -1,0 +1,16 @@
+defaults:
+  - model: qwen_06b
+  - dataset: ru_en_100
+  - metrics: dnsmos_only
+  - experiment: base
+  - _self_
+
+run:
+  seed: 42
+  config_name: quality_default
+  result_dir: benchmark/tmp_results/quality
+  save_audio: true
+
+hydra:
+  run:
+    dir: .

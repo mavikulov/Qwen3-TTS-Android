@@ -1,0 +1,16 @@
+dnsmos:
+  enabled: false
+  metric:
+    _target_: quality.metrics.dnsmos_metric.DNSMOSMetric
+    sample_rate: 16000
+
+wer_cer:
+  enabled: true
+  metric:
+    _target_: quality.metrics.asr_whisper.WhisperWerCerMetric
+    model_name: small
+    device: auto
+    compute_type: float32
+    normalize_text: true
+    beam_size: 1
+    download_root: null

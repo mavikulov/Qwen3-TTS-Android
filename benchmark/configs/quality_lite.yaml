@@ -1,0 +1,20 @@
+defaults:
+  - model: onnx_tts
+  - dataset: ru_en_10
+  - metrics: dnsmos_only
+  - experiment: base
+  - _self_
+
+run:
+  seed: 42
+  config_name: quality_default
+  result_dir: benchmark/tmp_results/quality
+  save_audio: true
+
+hydra:
+  run:
+    dir: .
+
+model_meta:
+  model_id: qwen3_tts_onnx
+  voice: default

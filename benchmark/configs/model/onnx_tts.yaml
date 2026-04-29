@@ -1,0 +1,15 @@
+_target_: quality.model_adapters.onnx_adapter.QwenOnnxTTSAdapter
+onnx_model_path: /Users/ruaoccj/qwen3_tts_bundle_final
+embeddings_path: null
+language_map:
+  ru: Russian
+  en: English
+sample_rate: 24000
+device: cpu
+speaker_id: -1
+variant: "0.6b"
+max_new_tokens: 200
+temperature: 0.9
+top_k: 50
+repetition_penalty: 1.05
+min_new_tokens: 2
