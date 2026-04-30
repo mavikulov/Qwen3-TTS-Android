@@ -52,7 +52,7 @@ class Sampler:
         temperature: float,
         top_k: int,
         penalty: float
-        ) -> int:
+    ) -> int:
         x = self.apply_repetition_penalty(logits, previous_tokens, penalty)
         x = self.apply_top_k_temperature(x, temperature, top_k)
         probs = self.softmax(x)

@@ -1,9 +1,13 @@
 package com.example.qwen3_tts.data.npy
 
+import android.content.res.AssetManager
 import java.io.File
+import java.io.FileInputStream
+import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.channels.FileChannel
 import java.nio.charset.Charset
 
 class NpyReader {
@@ -36,12 +40,49 @@ class NpyReader {
                     floatData[i] = halfToFloat(buffer.short)
                 }
             }
+            NpyFormat.DType.INT8 -> {
+                for (i in 0 until elementCount) {
+                    floatData[i] = buffer.get().toFloat()
+                }
+            }
         }
 
         return NpyFloatArray(
             shape = metadata.shape,
             data = floatData
         )
+    }
+
+    fun readFloatArrayFromAsset(assetManager: AssetManager, assetPath: String): NpyFloatArray {
+        val bytes = assetManager.open(assetPath).use { it.readBytes() }
+        val metadata = NpyFormat.readMetadataFromBytes(bytes, assetPath.substringAfterLast('/'))
+        val elementCount = metadata.shape.fold(1) { acc, dim -> acc * dim }
+        val expectedBytes = elementCount * metadata.dtype.bytesPerElement
+
+        val floatData = FloatArray(elementCount)
+        val buffer = ByteBuffer
+            .wrap(bytes, metadata.dataOffset, expectedBytes)
+            .order(ByteOrder.LITTLE_ENDIAN)
+
+        when (metadata.dtype) {
+            NpyFormat.DType.FLOAT32 -> {
+                for (i in 0 until elementCount) {
+                    floatData[i] = buffer.getFloat()
+                }
+            }
+            NpyFormat.DType.FLOAT16 -> {
+                for (i in 0 until elementCount) {
+                    floatData[i] = halfToFloat(buffer.short)
+                }
+            }
+            NpyFormat.DType.INT8 -> {
+                for (i in 0 until elementCount) {
+                    floatData[i] = buffer.get().toFloat()
+                }
+            }
+        }
+
+        return NpyFloatArray(shape = metadata.shape, data = floatData)
     }
 }
 
@@ -134,11 +175,141 @@ class NpyHalfRowReader(file: File) : AutoCloseable {
     }
 }
 
+// ── Asset-backed row readers (no extraction from APK needed) ──────────────────
+
+// Reads FP16 rows from an uncompressed asset using AssetFileDescriptor + FileChannel
+// for O(1) random access without loading the whole file into memory.
+class NpyHalfRowReaderAsset(
+    assetManager: AssetManager,
+    assetPath: String
+) : AutoCloseable {
+
+    val shape: IntArray
+    val rows: Int
+    val cols: Int
+
+    private val afd = assetManager.openFd(assetPath)
+    private val channel: FileChannel = FileInputStream(afd.fileDescriptor).channel
+    private val fileStartOffset: Long = afd.startOffset
+    private val dataOffset: Long
+
+    init {
+        val metadata = assetManager.open(assetPath).use { stream ->
+            NpyFormat.readMetadataFromStream(stream, assetPath.substringAfterLast('/'))
+        }
+        shape = metadata.shape
+        rows = shape[0]
+        cols = shape[1]
+        dataOffset = metadata.dataOffset.toLong()
+    }
+
+    fun readRowAsFloat(rowIndex: Int): FloatArray {
+        require(rowIndex in 0 until rows) { "Row $rowIndex out of [0,$rows)" }
+        val rowByteCount = cols * 2
+        val position = fileStartOffset + dataOffset + rowIndex.toLong() * rowByteCount
+
+        val buf = ByteBuffer.allocate(rowByteCount).order(ByteOrder.LITTLE_ENDIAN)
+        var remaining = rowByteCount
+        var pos = position
+        while (remaining > 0) {
+            val read = channel.read(buf, pos)
+            if (read <= 0) break
+            remaining -= read
+            pos += read
+        }
+        buf.rewind()
+
+        val result = FloatArray(cols)
+        for (i in 0 until cols) {
+            result[i] = halfToFloat(buf.short)
+        }
+        return result
+    }
+
+    override fun close() {
+        channel.close()
+        afd.close()
+    }
+}
+
+// Reads INT8 rows + FP16 per-row scales, returns dequantized FloatArray.
+// text_embedding.npy: int8 [151936, 2048]
+// text_embedding_scales.npy: float16 [151936]
+class NpyInt8ScaledRowReaderAsset(
+    assetManager: AssetManager,
+    dataAssetPath: String,
+    scalesAssetPath: String
+) : AutoCloseable {
+
+    val shape: IntArray
+    val rows: Int
+    val cols: Int
+
+    private val afd = assetManager.openFd(dataAssetPath)
+    private val channel: FileChannel = FileInputStream(afd.fileDescriptor).channel
+    private val fileStartOffset: Long = afd.startOffset
+    private val dataOffset: Long
+
+    private val scales: FloatArray  // pre-loaded scales in FP32
+
+    init {
+        val metadata = assetManager.open(dataAssetPath).use { stream ->
+            NpyFormat.readMetadataFromStream(stream, dataAssetPath.substringAfterLast('/'))
+        }
+        require(metadata.dtype == NpyFormat.DType.INT8) {
+            "Expected INT8 dtype in $dataAssetPath, got ${metadata.dtype}"
+        }
+        shape = metadata.shape
+        rows = shape[0]
+        cols = shape[1]
+        dataOffset = metadata.dataOffset.toLong()
+
+        // Load scales fully into memory (~0.3 MB for 151936 float16 values)
+        val scaleMeta = assetManager.open(scalesAssetPath).use { stream ->
+            NpyFormat.readMetadataFromStream(stream, scalesAssetPath.substringAfterLast('/'))
+        }
+        val scaleBytes = assetManager.open(scalesAssetPath).use { it.readBytes() }
+        val scaleBuf = ByteBuffer.wrap(scaleBytes, scaleMeta.dataOffset, rows * 2)
+            .order(ByteOrder.LITTLE_ENDIAN)
+        scales = FloatArray(rows) { halfToFloat(scaleBuf.short) }
+    }
+
+    fun readRowAsFloat(rowIndex: Int): FloatArray {
+        require(rowIndex in 0 until rows) { "Row $rowIndex out of [0,$rows)" }
+        val rowByteCount = cols
+        val position = fileStartOffset + dataOffset + rowIndex.toLong() * rowByteCount
+
+        val buf = ByteBuffer.allocate(rowByteCount).order(ByteOrder.LITTLE_ENDIAN)
+        var remaining = rowByteCount
+        var pos = position
+        while (remaining > 0) {
+            val read = channel.read(buf, pos)
+            if (read <= 0) break
+            remaining -= read
+            pos += read
+        }
+        buf.rewind()
+
+        val scale = scales[rowIndex]
+        val result = FloatArray(cols)
+        for (i in 0 until cols) {
+            result[i] = buf.get().toFloat() * scale
+        }
+        return result
+    }
+
+    override fun close() {
+        channel.close()
+        afd.close()
+    }
+}
+
 internal object NpyFormat {
 
     enum class DType(val bytesPerElement: Int) {
         FLOAT16(2),
-        FLOAT32(4)
+        FLOAT32(4),
+        INT8(1)
     }
 
     data class Metadata(
@@ -154,11 +325,13 @@ internal object NpyFormat {
     fun readMetadataFromBytes(file: File): Metadata {
         require(file.exists()) { "NPY file does not exist: ${file.absolutePath}" }
         require(file.length() > 0L) { "NPY file is empty: ${file.absolutePath}" }
+        return readMetadataFromBytes(file.readBytes(), file.name)
+    }
 
-        val bytes = file.readBytes()
-        require(bytes.size >= 16) { "Invalid NPY file (too small): ${file.absolutePath}" }
+    fun readMetadataFromBytes(bytes: ByteArray, fileName: String): Metadata {
+        require(bytes.size >= 16) { "Invalid NPY file (too small): $fileName" }
 
-        validateMagic(bytes, file.name)
+        validateMagic(bytes, fileName)
 
         val major = bytes[6].toInt() and 0xFF
         val minor = bytes[7].toInt() and 0xFF
@@ -188,14 +361,14 @@ internal object NpyFormat {
         }
 
         require(dataOffset <= bytes.size) {
-            "Invalid NPY header offset in ${file.name}"
+            "Invalid NPY header offset in $fileName"
         }
 
         val header = bytes
             .copyOfRange(headerStart, dataOffset)
             .toString(ASCII)
 
-        return parseHeader(file.name, major, minor, header, dataOffset)
+        return parseHeader(fileName, major, minor, header, dataOffset)
     }
 
     fun readMetadataFromRaf(file: File, raf: RandomAccessFile): Metadata {
@@ -235,6 +408,40 @@ internal object NpyFormat {
         return parseHeader(file.name, major, minor, header, dataOffset)
     }
 
+    fun readMetadataFromStream(stream: InputStream, fileName: String): Metadata {
+        val magic = ByteArray(6)
+        stream.readFully(magic)
+        validateMagic(magic, fileName)
+
+        val major = stream.read()
+        val minor = stream.read()
+
+        val headerLength: Int
+        val headerStart: Int
+
+        when (major) {
+            1 -> {
+                val b0 = stream.read(); val b1 = stream.read()
+                headerLength = b0 or (b1 shl 8)
+                headerStart = 10
+            }
+            2, 3 -> {
+                val b0 = stream.read(); val b1 = stream.read()
+                val b2 = stream.read(); val b3 = stream.read()
+                headerLength = b0 or (b1 shl 8) or (b2 shl 16) or (b3 shl 24)
+                headerStart = 12
+            }
+            else -> throw IllegalArgumentException("Unsupported NPY version: $major.$minor in $fileName")
+        }
+
+        val headerBytes = ByteArray(headerLength)
+        stream.readFully(headerBytes)
+        val header = headerBytes.toString(ASCII)
+        val dataOffset = headerStart + headerLength
+
+        return parseHeader(fileName, major, minor, header, dataOffset)
+    }
+
     private fun parseHeader(
         fileName: String,
         major: Int,
@@ -249,10 +456,11 @@ internal object NpyFormat {
             ?: throw IllegalArgumentException("NPY header missing shape in $fileName")
 
         val dtype = when {
-            descr.contains("<f4") -> DType.FLOAT32
-            descr.contains("<f2") -> DType.FLOAT16
+            descr.contains("<f4") || descr.contains(">f4") -> DType.FLOAT32
+            descr.contains("<f2") || descr.contains(">f2") -> DType.FLOAT16
+            descr.contains("|i1") || descr.contains("<i1") -> DType.INT8
             else -> throw IllegalArgumentException(
-                "Only little-endian float32/float16 supported. Got descr=$descr in $fileName"
+                "Unsupported dtype descr=$descr in $fileName (expected f4/f2/i1)"
             )
         }
 
@@ -304,6 +512,15 @@ internal object NpyFormat {
             .filter { it.isNotEmpty() }
             .map { it.toInt() }
             .toIntArray()
+    }
+}
+
+private fun InputStream.readFully(buf: ByteArray) {
+    var offset = 0
+    while (offset < buf.size) {
+        val n = read(buf, offset, buf.size - offset)
+        if (n < 0) throw java.io.EOFException("Unexpected end of stream")
+        offset += n
     }
 }
 

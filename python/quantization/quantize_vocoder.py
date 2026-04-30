@@ -47,14 +47,14 @@ if __name__ == "__main__":
     path_to_quantized = Path("/Users/ruaoccj/talker_prefil_custom.onnx")
     
     extra_options = {
-        "MatMulConstBOnly": True,              # уже есть — квантуем только веса
-        "ForceSymmetric": False,                # симметричная квантизация (быстрее на ARM/CPU)
-        "ActivationSymmetric": True,           # симметричные активации
-        "WeightSymmetric": True,               # явное указание (по умолчанию True)
-        "EnableSubgraph": True,                # квантизация подграфов целиком
-        "AddQDQToOutput": False,               # не добавляем QDQ на выход — меньше накладных расходов
-        "QuantizeLinearMatMul": True,          # явное включение QLinearMatMul ядер
-        "ReduceOp": True,                      # квантовать Reduce-операции
+        "MatMulConstBOnly": True,
+        "ForceSymmetric": False,
+        "ActivationSymmetric": True,
+        "WeightSymmetric": True,
+        "EnableSubgraph": True,
+        "AddQDQToOutput": False,
+        "QuantizeLinearMatMul": True,
+        "ReduceOp": True
     }
 
     data_file = str(fp32_path) + ".data"

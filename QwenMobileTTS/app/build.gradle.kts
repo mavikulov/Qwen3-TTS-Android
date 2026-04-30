@@ -33,6 +33,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    // Prevent aapt from compressing model/embedding files so they can be
+    // memory-mapped and accessed via AssetFileDescriptor without extraction.
+    androidResources {
+        noCompress += listOf("onnx", "npy", "bin", "json", "txt")
+    }
 }
 
 dependencies {

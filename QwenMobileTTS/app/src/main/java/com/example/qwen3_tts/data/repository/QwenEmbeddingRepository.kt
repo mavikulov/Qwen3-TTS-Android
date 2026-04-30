@@ -1,7 +1,10 @@
 package com.example.qwen3_tts.data.repository
 
+import android.content.res.AssetManager
 import com.example.qwen3_tts.data.npy.NpyFloatRowReader
 import com.example.qwen3_tts.data.npy.NpyHalfRowReader
+import com.example.qwen3_tts.data.npy.NpyHalfRowReaderAsset
+import com.example.qwen3_tts.data.npy.NpyInt8ScaledRowReaderAsset
 import com.example.qwen3_tts.data.npy.NpyReader
 import com.example.qwen3_tts.data.npy.NpyFormat
 import java.io.Closeable
@@ -34,6 +37,20 @@ class QwenEmbeddingRepository(
         override fun close() = reader.close()
     }
 
+    private class HalfRowAssetSource(
+        private val reader: NpyHalfRowReaderAsset
+    ) : RowSource {
+        override fun readRowAsFloat(rowIndex: Int): FloatArray = reader.readRowAsFloat(rowIndex)
+        override fun close() = reader.close()
+    }
+
+    private class Int8ScaledRowAssetSource(
+        private val reader: NpyInt8ScaledRowReaderAsset
+    ) : RowSource {
+        override fun readRowAsFloat(rowIndex: Int): FloatArray = reader.readRowAsFloat(rowIndex)
+        override fun close() = reader.close()
+    }
+
     private var textEmbeddingRowSource: RowSource? = null
     private var talkerCodecEmbeddingRowSource: RowSource? = null
     private val cpCodecEmbeddingSources = mutableMapOf<Int, RowSource>()
@@ -42,6 +59,8 @@ class QwenEmbeddingRepository(
     private var textProjectionFc1BiasCache: NpyReader.NpyFloatArray? = null
     private var textProjectionFc2WeightCache: NpyReader.NpyFloatArray? = null
     private var textProjectionFc2BiasCache: NpyReader.NpyFloatArray? = null
+
+    // ── File-based loading (ZIP-import path) ─────────────────────────────────
 
     fun loadRequiredCoreEmbeddings() {
         textEmbeddingRowSource = openRowSource(modelRepository.getEmbeddingFile("text_embedding.npy"))
@@ -57,6 +76,54 @@ class QwenEmbeddingRepository(
         textProjectionFc2WeightCache = loadSmallEmbeddingFile("text_projection_fc2_weight.npy")
         textProjectionFc2BiasCache = loadSmallEmbeddingFile("text_projection_fc2_bias.npy")
     }
+
+    // ── Asset-based loading ───────────────────────────────────────────────────
+
+    fun loadRequiredCoreEmbeddingsFromAssets(assetManager: AssetManager) {
+        val textEmbPath = modelRepository.getEmbeddingAssetPath("text_embedding.npy")
+        val scalesPath = modelRepository.getEmbeddingAssetPath("text_embedding_scales.npy")
+
+        // If scales file exists → INT8 quantized; otherwise FP16
+        val assetFiles = assetManager.list(QwenModelRepository.ASSET_EMBEDDINGS_DIR) ?: emptyArray()
+        textEmbeddingRowSource = if ("text_embedding_scales.npy" in assetFiles) {
+            Int8ScaledRowAssetSource(
+                NpyInt8ScaledRowReaderAsset(assetManager, textEmbPath, scalesPath)
+            )
+        } else {
+            HalfRowAssetSource(NpyHalfRowReaderAsset(assetManager, textEmbPath))
+        }
+
+        talkerCodecEmbeddingRowSource = HalfRowAssetSource(
+            NpyHalfRowReaderAsset(
+                assetManager,
+                modelRepository.getEmbeddingAssetPath("talker_codec_embedding.npy")
+            )
+        )
+
+        for (i in 0 until 15) {
+            cpCodecEmbeddingSources[i] = HalfRowAssetSource(
+                NpyHalfRowReaderAsset(
+                    assetManager,
+                    modelRepository.getEmbeddingAssetPath("cp_codec_embedding_$i.npy")
+                )
+            )
+        }
+
+        textProjectionFc1WeightCache = npyReader.readFloatArrayFromAsset(
+            assetManager, modelRepository.getEmbeddingAssetPath("text_projection_fc1_weight.npy")
+        )
+        textProjectionFc1BiasCache = npyReader.readFloatArrayFromAsset(
+            assetManager, modelRepository.getEmbeddingAssetPath("text_projection_fc1_bias.npy")
+        )
+        textProjectionFc2WeightCache = npyReader.readFloatArrayFromAsset(
+            assetManager, modelRepository.getEmbeddingAssetPath("text_projection_fc2_weight.npy")
+        )
+        textProjectionFc2BiasCache = npyReader.readFloatArrayFromAsset(
+            assetManager, modelRepository.getEmbeddingAssetPath("text_projection_fc2_bias.npy")
+        )
+    }
+
+    // ── Row access (same for both paths) ─────────────────────────────────────
 
     fun textEmbeddingRow(tokenId: Int): FloatArray {
         val source = requireNotNull(textEmbeddingRowSource) {
@@ -141,6 +208,10 @@ class QwenEmbeddingRepository(
         return when (dtype) {
             NpyFormat.DType.FLOAT32 -> FloatRowSource(NpyFloatRowReader(file))
             NpyFormat.DType.FLOAT16 -> HalfRowSource(NpyHalfRowReader(file))
+            NpyFormat.DType.INT8 -> error(
+                "INT8 embeddings loaded via file path require a scales file. " +
+                "Use loadRequiredCoreEmbeddingsFromAssets() instead."
+            )
         }
     }
 

@@ -2,6 +2,7 @@ package com.example.qwen3_tts.config
 
 import org.json.JSONObject
 import java.io.File
+import java.io.InputStream
 
 class QwenConfigLoader(
     private val tag: String = "Qwen3TTS"
@@ -41,11 +42,20 @@ class QwenConfigLoader(
         val languageIds: Map<String, Int>
     )
 
+    fun load(inputStream: InputStream): FullConfig {
+        val text = inputStream.bufferedReader(Charsets.UTF_8).readText()
+        return parseConfig(text)
+    }
+
     fun load(configFile: File): FullConfig {
         require(configFile.exists()) { "config.json does not exist: ${configFile.absolutePath}" }
         require(configFile.length() > 0L) { "config.json is empty: ${configFile.absolutePath}" }
 
         val text = configFile.readText(Charsets.UTF_8)
+        return parseConfig(text)
+    }
+
+    private fun parseConfig(text: String): FullConfig {
         val root = JSONObject(text)
 
         val talkerJson = root.getJSONObject("talker")

@@ -1,6 +1,7 @@
 package com.example.qwen3_tts.data.repository
 
 import android.content.Context
+import android.content.res.AssetManager
 import java.io.File
 import com.example.qwen3_tts.storage.QwenStoragePaths
 
@@ -26,8 +27,7 @@ class QwenModelRepository(
 
         val REQUIRED_TOKENIZER_FILES = listOf(
             "vocab.json",
-            "merges.txt",
-            "qwen3_tts_token_fixtures.json"
+            "merges.txt"
         )
 
         val REQUIRED_EMBEDDING_FILES = listOf(
@@ -39,17 +39,39 @@ class QwenModelRepository(
             "text_projection_fc2_bias.npy",
             "talker_codec_embedding.npy"
         ) + (0..14).map { "cp_codec_embedding_$it.npy" }
+
+        // Asset layout mirrors the bundle directory structure.
+        const val ASSET_MODELS_DIR = "models"
+        const val ASSET_EMBEDDINGS_DIR = "embeddings"
+        const val ASSET_TOKENIZER_DIR = "tokenizer"
     }
 
     init {
         paths.ensureDirectories()
     }
 
+    // ── File-based access (ZIP-import path) ──────────────────────────────────
+
     fun getModelFile(name: String): File = File(paths.modelsDir, name)
     fun getEmbeddingFile(name: String): File = File(paths.embeddingsDir, name)
     fun getTokenizerFile(name: String): File = File(paths.tokenizerDir, name)
-
     fun getTokenizerDir(): File = paths.tokenizerDir
+
+    // ── Asset-based access ───────────────────────────────────────────────────
+
+    fun getModelAssetPath(name: String): String = "$ASSET_MODELS_DIR/$name"
+    fun getEmbeddingAssetPath(name: String): String = "$ASSET_EMBEDDINGS_DIR/$name"
+    fun getTokenizerAssetPath(name: String): String = "$ASSET_TOKENIZER_DIR/$name"
+
+    fun isAssetBundlePresent(assetManager: AssetManager): Boolean {
+        return try {
+            assetManager.list(ASSET_MODELS_DIR)?.contains("talker_prefill.onnx") == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    // ── Validation ───────────────────────────────────────────────────────────
 
     fun missingRequiredFiles(): List<String> {
         val missing = mutableListOf<String>()

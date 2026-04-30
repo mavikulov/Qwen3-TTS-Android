@@ -111,7 +111,7 @@ def main():
         top_k=top_k,
         repetition_penalty=rep_penalty,
         min_new_tokens=min_new_tokens,
-        save_dir=save_dir if args.log_level == "DEBUG" else None
+        save_dir=None
     )
     
     gen_time = time.perf_counter() - t0

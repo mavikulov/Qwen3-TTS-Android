@@ -1,5 +1,6 @@
 package com.example.qwen3_tts.tokenizer
 
+import android.content.res.AssetManager
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -14,8 +15,8 @@ private class QwenGpt2PreTokenizer {
     }
 }
 
-class QwenTextTokenizer(
-    tokenizerDir: File,
+class QwenTextTokenizer private constructor(
+    private val resources: QwenBpeResources.Resources,
     private val tag: String = "Qwen3TTS"
 ) {
     companion object {
@@ -23,9 +24,14 @@ class QwenTextTokenizer(
         const val IM_END_ID = 151645
         const val ASSISTANT_TOKEN_ID = 77091
         const val NEWLINE_TOKEN_ID = 198
+
+        operator fun invoke(tokenizerDir: File, tag: String = "Qwen3TTS"): QwenTextTokenizer =
+            QwenTextTokenizer(QwenBpeResources(tag).load(tokenizerDir), tag)
+
+        operator fun invoke(assetManager: AssetManager, assetDir: String, tag: String = "Qwen3TTS"): QwenTextTokenizer =
+            QwenTextTokenizer(QwenBpeResources(tag).load(assetManager, assetDir), tag)
     }
 
-    private val resources = QwenBpeResources(tag).load(tokenizerDir)
     private val byteEncoder = QwenByteEncoder()
     private val preTokenizer = QwenGpt2PreTokenizer()
     private val bpeCache = ConcurrentHashMap<String, List<String>>()
