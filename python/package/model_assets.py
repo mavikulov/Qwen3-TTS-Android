@@ -139,9 +139,6 @@ class PrefillEmbeddingBuilder:
         table = self.assets.get("cp_codec_embeddings")[group_idx]
         return table[token_id].astype(np.float32, copy=False)
     
-    def build_codec_prefixes(self, ) -> list[np.ndarray]:
-        pass
-    
     def build(
         self,
         token_ids: np.ndarray,
