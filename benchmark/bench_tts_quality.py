@@ -1,9 +1,3 @@
-"""Quality benchmark runner for TTS models.
-
-Computes DNSMOS and WER/CER (via Whisper) on RU/EN datasets.
-Configured via Hydra.
-"""
-
 from __future__ import annotations
 
 import json
@@ -34,22 +28,18 @@ def _set_seed(seed: int) -> None:
 
 
 def _score_metric(metric: Any, wav: Any, sample_rate: int | None, reference_text: str, lang_key: str) -> dict[str, Any]:
-    # (wav, sr, text, lang) — например WER/CER
     try:
         return metric.score(wav, sample_rate, reference_text, lang_key)
     except TypeError:
         pass
-    # (wav, text, lang) — без sr
     try:
         return metric.score(wav, reference_text, lang_key)
     except TypeError:
         pass
-    # (wav, sr) — например DNSMOS
     try:
         return metric.score(wav, sample_rate)
     except TypeError:
         pass
-    # фолбэк: пишем во временный файл и пробуем path-based сигнатуры
     if isinstance(wav, (np.ndarray, list)) and sample_rate is not None:
         with NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             sf.write(tmp.name, np.asarray(wav, dtype=np.float32), sample_rate)
@@ -136,15 +126,6 @@ def main(cfg: DictConfig) -> None:
 
     elapsed_s = time.perf_counter() - started_at
     summary = aggregate_results(all_rows)
-    # meta = {
-    #     "run_id": run_id,
-    #     "config_name": cfg.run.config_name,
-    #     "model_id": cfg.model.model_id,
-    #     "voice": cfg.model.voice,
-    #     "seed": int(cfg.run.seed),
-    #     "metrics_enabled": list(metrics.keys()),
-    #     "duration_s": elapsed_s,
-    # }
 
     meta = {
         "run_id": run_id,

@@ -1,5 +1,3 @@
-"""Prepare frozen manifests for quality benchmark datasets."""
-
 from __future__ import annotations
 
 from pathlib import Path

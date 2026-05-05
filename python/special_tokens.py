@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class SpecialTokens:
     END_OF_TEXT_ID: int = 151643
     IM_START_ID: int = 151644

@@ -7,8 +7,6 @@ from jiwer import cer, wer
 
 
 class WhisperWerCerMetric:
-    """Whisper-based ASR metric with WER/CER."""
-
     def __init__(
         self,
         model_name: str = "small",

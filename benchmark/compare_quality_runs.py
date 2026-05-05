@@ -1,5 +1,3 @@
-"""Compare multiple quality benchmark runs."""
-
 from __future__ import annotations
 
 import argparse

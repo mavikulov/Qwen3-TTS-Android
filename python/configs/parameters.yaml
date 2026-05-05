@@ -1,0 +1,17 @@
+paths:
+  embeddings: "qwen3_bundle/embeddings"
+  tokenizer: "qwen3_bundle/tokenizer"
+  talker_prefill: "qwen3_bundle/models/talker_prefill.onnx"
+  talker_decode: "qwen3_bundle/models/talker_decode.onnx"
+  code_predictor: "qwen3_bundle/models/code_predictor.onnx"
+  vocoder: "qwen3_bundle/models/vocoder.onnx"
+  output_wav_path: "saved_wav"
+
+inference_params:
+  language: "auto"
+  speaker_id: 2
+  max_new_tokens: 512
+  min_new_tokens: 0
+  temperature: 0.8
+  top_k: 50
+  repetition_penalty: 1.1

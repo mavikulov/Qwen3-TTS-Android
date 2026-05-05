@@ -1,20 +1,19 @@
 import sys
+import json
 import yaml
 import random
 import logging
 from pathlib import Path
 from dataclasses import dataclass
+from typing import Union, Any, Optional
 
 import onnx
-import onnxruntime as ort
 import numpy as np
 import soundfile as sf
+import onnxruntime as ort
 
 
-LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
+@dataclass(frozen=True)
 class ModelSessions:
     prefill: ort.InferenceSession
     decode: ort.InferenceSession
@@ -22,21 +21,16 @@ class ModelSessions:
     vocoder: ort.InferenceSession
     
     @classmethod
-    def load(cls, model_files: dict, loader_func):
+    def load(cls, model_files: dict):
         return cls(
-            prefill=loader_func(model_files["prefill"]),
-            decode=loader_func(model_files["decode"]),
-            cp=loader_func(model_files["cp"]),
-            vocoder=loader_func(model_files["vocoder"]),
+            prefill=ort.InferenceSession(model_files["talker_prefill"]),
+            decode=ort.InferenceSession(model_files["talker_decode"]),
+            cp=ort.InferenceSession(model_files["code_predictor"]),
+            vocoder=ort.InferenceSession(model_files["vocoder"])
         )
 
 
-def get_model_size_mb(path_to_model: Path) -> float:
-    model = onnx.load(path_to_model)
-    return round(model.ByteSize() / (1024 * 1024), 2)
-
-
-def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
+def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     handlers = [logging.StreamHandler(sys.stdout)]
     if log_file:
@@ -50,39 +44,40 @@ def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
     )
 
 
-def load_session(model_path: Path) -> ort.InferenceSession:
-    options = ort.SessionOptions()
-    options.enable_cpu_mem_arena = True
-    options.enable_mem_pattern = True
-    
-    return ort.InferenceSession(
-        path_or_bytes=str(model_path),
-        sess_options=options,
-        providers=["CPUExecutionProvider"]
-    )
+def set_seed(seed: int) -> None:
+    np.random.seed(seed)
+    random.seed(seed)
 
 
-def resolve_path(raw_path: Path) -> Path:
+def resolve_path(raw_path: str) -> Path:
     return Path(raw_path).expanduser().resolve()
 
 
-def set_seed(seed: int | None) -> None:
-    if seed is not None:
-        np.random.seed(seed)
-        random.seed(seed)
+def get_param(config: dict, key: str) -> Union[int, float, str]:
+    return config.get(key, None)
 
 
-def read_config(path: Path) -> dict[str, dict[str, str | float]]:
-    with open(path, "r", encoding='utf-8') as yaml_file:
-        return yaml.load(yaml_file, Loader=yaml.SafeLoader)
+def load_yaml(yaml_path: Path) -> Any:
+    with open(yaml_path, "r") as yaml_file:
+        return yaml.safe_load(yaml_file)
 
 
-def save_wav(path: Path, signal: np.ndarray, sample_rate: int = 24000) -> None:
-    arr = signal
+def load_config(json_path: Path) -> Any:
+    with open(json_path, "r") as json_file:
+        return json.load(json_file)
+    
+
+def get_model_size_mb(path_to_model: Path) -> float:
+    model = onnx.load(path_to_model)
+    return round(model.ByteSize() / (1024 * 1024), 2)
+
+
+def save_wav(path: Path, waveform: np.ndarray, sample_rate: int = 24000) -> None:
+    arr = waveform
     if arr.ndim == 3: 
         arr = arr[0, 0]
     elif arr.ndim == 2: 
         arr = arr[0]
     elif arr.ndim != 1:
-        raise ValueError(f"Unexpected waveform shape: {signal.shape}")
+        raise ValueError(f"Unexpected waveform shape: {waveform.shape}")
     sf.write(str(path), arr, sample_rate)

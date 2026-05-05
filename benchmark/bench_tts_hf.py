@@ -1,16 +1,3 @@
-"""Benchmark Qwen3-TTS using HuggingFace transformers (qwen_tts library).
-
-Measures E2E latency, RTF, and audio duration for offline (non-serving) inference.
-Results are saved in the same JSON format as bench_tts_serve.py for unified plotting.
-
-Usage:
-    python bench_tts_hf.py \
-        --model Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice \
-        --num-prompts 50 \
-        --num-warmups 3 \
-        --gpu-device 0 \
-        --result-dir results/
-"""
 import os
 import argparse
 import json
@@ -23,43 +10,39 @@ import numpy as np
 import soundfile as sf
 import torch
 
-file_dir = os.path.dirname(os.path.realpath(__file__))
 
+file_dir = os.path.dirname(os.path.realpath(__file__))
 PROMPTS = [line.rstrip() for line in open(file_dir + "/requests.txt", 'r').readlines()]
+
 
 @dataclass
 class BenchmarkResult:
     config_name: str = ""
-    concurrency: int = 1  # always 1 for offline
+    concurrency: int = 1
     num_prompts: int = 0
     completed: int = 0
     failed: int = 0
     duration_s: float = 0.0
-    # TTFP stats - not applicable for HF offline, set to E2E for compatibility with vllm-
     mean_ttfp_ms: float = 0.0
     median_ttfp_ms: float = 0.0
     std_ttfp_ms: float = 0.0
     p90_ttfp_ms: float = 0.0
     p95_ttfp_ms: float = 0.0
     p99_ttfp_ms: float = 0.0
-    # E2E stats (ms)
     mean_e2e_ms: float = 0.0
     median_e2e_ms: float = 0.0
     std_e2e_ms: float = 0.0
     p90_e2e_ms: float = 0.0
     p95_e2e_ms: float = 0.0
     p99_e2e_ms: float = 0.0
-    # RTF stats
     mean_rtf: float = 0.0
     median_rtf: float = 0.0
     std_rtf: float = 0.0
     p99_rtf: float = 0.0
-    # Audio stats
     mean_audio_duration_s: float = 0.0
     total_audio_duration_s: float = 0.0
     audio_throughput: float = 0.0
     request_throughput: float = 0.0
-    # Per-request details
     per_request: list = field(default_factory=list)
 
 
@@ -84,10 +67,9 @@ def run_benchmark(args):
     if not args.num_prompts:
         args.num_prompts = len(PROMPTS)
 
-    # Build prompt list
     prompts = [PROMPTS[i % len(PROMPTS)] for i in range(args.num_prompts)]
     print(f"Number of promts: {len(prompts)}")
-    # Warmup
+
     if args.num_warmups > 0:
         print(f"Warming up with {args.num_warmups} requests...")
         for i in range(args.num_warmups):
@@ -101,7 +83,6 @@ def run_benchmark(args):
             torch.cuda.synchronize(device)
         print("Warmup done.")
 
-    # Benchmark
     print(f"Running {args.num_prompts} requests sequentially...")
     e2e_times = []
     rtfs = []
@@ -145,7 +126,7 @@ def run_benchmark(args):
             per_request.append(
                 {
                     "e2e_ms": elapsed * 1000,
-                    "ttfp_ms": elapsed * 1000,  # no streaming, TTFP = E2E
+                    "ttfp_ms": elapsed * 1000,
                     "rtf": rtf,
                     "audio_duration_s": audio_dur,
                     "prompt": prompt,
@@ -167,7 +148,6 @@ def run_benchmark(args):
     total_duration = time.perf_counter() - total_start
     completed = len(e2e_times)
 
-    # Compute stats
     result = BenchmarkResult(
         config_name=args.config_name,
         concurrency=1,
@@ -187,7 +167,6 @@ def run_benchmark(args):
         result.p95_e2e_ms = float(np.percentile(e2e_ms, 95))
         result.p99_e2e_ms = float(np.percentile(e2e_ms, 99))
 
-        # For HF offline, TTFP = E2E (no streaming)
         result.mean_ttfp_ms = result.mean_e2e_ms
         result.median_ttfp_ms = result.median_e2e_ms
         result.std_ttfp_ms = result.std_e2e_ms
@@ -206,7 +185,6 @@ def run_benchmark(args):
         result.request_throughput = completed / total_duration
         result.per_request = per_request
 
-    # Print summary in standardized performance template
     W = 50
     print("")
     print(f"{'=' * W}")
@@ -243,7 +221,6 @@ def run_benchmark(args):
     print(f"{'=' * W}")
     print("")
 
-    # Save results (as a list with single concurrency=1 entry, matching serve format)
     result_dir = Path(args.result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -251,6 +228,7 @@ def run_benchmark(args):
 
     with open(result_file, "w") as f:
         json.dump([asdict(result)], f, indent=2)
+        
     print(f"Results saved to {result_file}")
 
     return result

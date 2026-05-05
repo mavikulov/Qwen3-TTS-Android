@@ -10,8 +10,6 @@ import torch.nn.functional as F
 
 
 class DNSMOSMetric:
-    """DNSMOS metric wrapper based on torchmetrics."""
-
     def __init__(self, sample_rate: int = 16000) -> None:
         self.sample_rate = sample_rate
         try:
