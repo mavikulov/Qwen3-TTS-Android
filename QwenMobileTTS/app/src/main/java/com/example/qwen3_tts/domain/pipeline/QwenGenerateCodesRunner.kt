@@ -2,7 +2,6 @@ package com.example.qwen3_tts.domain.pipeline
 
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
-import android.content.res.AssetManager
 import com.example.qwen3_tts.config.QwenConfigLoader
 import com.example.qwen3_tts.data.repository.QwenEmbeddingRepository
 import com.example.qwen3_tts.data.repository.QwenModelRepository
@@ -33,8 +32,7 @@ class QwenGenerateCodesRunner(
         temperature: Float = 1.0f,
         topK: Int = 50,
         repetitionPenalty: Float = 1.1f,
-        minNewTokens: Int = 0,
-        assetManager: AssetManager? = null
+        minNewTokens: Int = 0
     ): GenerateCodesResult {
         require(tokenIds.isNotEmpty()) { "tokenIds must not be empty" }
         require(maxNewTokens > 0) { "maxNewTokens must be > 0" }
@@ -56,7 +54,10 @@ class QwenGenerateCodesRunner(
         )
 
         val prefillRunResult = OrtSession.SessionOptions().use { options ->
-            openSession(env, options, repo, "talker_prefill.onnx", assetManager).use { prefillSession ->
+            env.createSession(
+                repo.getModelFile("talker_prefill.onnx").absolutePath,
+                options
+            ).use { prefillSession ->
                 talkerPrefillRunner.run(
                     session = prefillSession,
                     prefill = prefill
@@ -68,10 +69,16 @@ class QwenGenerateCodesRunner(
         val generatedGroup0Tokens = mutableListOf<Int>()
 
         OrtSession.SessionOptions().use { decodeOptions ->
-            openSession(env, decodeOptions, repo, "talker_decode.onnx", assetManager).use { decodeSession ->
+            env.createSession(
+                repo.getModelFile("talker_decode.onnx").absolutePath,
+                decodeOptions
+            ).use { decodeSession ->
 
                 OrtSession.SessionOptions().use { cpOptions ->
-                    openSession(env, cpOptions, repo, "code_predictor.onnx", assetManager).use { codePredictorSession ->
+                    env.createSession(
+                        repo.getModelFile("code_predictor.onnx").absolutePath,
+                        cpOptions
+                    ).use { codePredictorSession ->
 
                         val timestep0 = codePredictorLoopRunner.runFromPrefill(
                             session = codePredictorSession,
@@ -167,20 +174,6 @@ class QwenGenerateCodesRunner(
             codebooks = 16,
             generatedGroup0Tokens = generatedGroup0Tokens.toList()
         )
-    }
-
-    private fun openSession(
-        env: OrtEnvironment,
-        options: OrtSession.SessionOptions,
-        repo: QwenModelRepository,
-        modelName: String,
-        assetManager: AssetManager?
-    ): OrtSession {
-        return if (assetManager != null) {
-            env.createSession(assetManager, repo.getModelAssetPath(modelName), options)
-        } else {
-            env.createSession(repo.getModelFile(modelName).absolutePath, options)
-        }
     }
 
     private fun flattenCodesToB16T(steps: List<List<Int>>): LongArray {

@@ -1,7 +1,6 @@
 package com.example.qwen3_tts.domain.pipeline
 
 import android.content.Context
-import android.content.res.AssetManager
 import java.io.Closeable
 import java.io.File
 import com.example.qwen3_tts.tokenizer.QwenTextTokenizer
@@ -33,58 +32,38 @@ class QwenTtsPipeline(
     private var cachedConfig: QwenConfigLoader.FullConfig? = null
     private var cachedTokenizer: QwenTextTokenizer? = null
     private var cachedSpeakerCatalog: SpeakerCatalogLoader.SpeakerCatalog? = null
-    // Non-null when models are loaded from APK assets; null when loaded from filesDir (ZIP import).
-    private var cachedAssetManager: AssetManager? = null
 
     private fun ensureInitialized() {
-        if (cachedRepo != null && cachedConfig != null &&
-            cachedTokenizer != null && cachedSpeakerCatalog != null
-        ) return
+        if (
+            cachedRepo != null &&
+            cachedConfig != null &&
+            cachedTokenizer != null &&
+            cachedSpeakerCatalog != null
+        ) {
+            return
+        }
 
         val repo = QwenModelRepository(context)
-
-        if (repo.isAssetBundlePresent(context.assets)) {
-            initFromAssets(repo, context.assets)
-        } else {
-            initFromFiles(repo)
-        }
-    }
-
-    private fun initFromAssets(repo: QwenModelRepository, assets: AssetManager) {
         val configLoader = QwenConfigLoader(tag)
 
-        val config = assets.open(repo.getEmbeddingAssetPath("config.json")).use {
-            configLoader.load(it)
-        }
-        val tokenizer = QwenTextTokenizer(
-            assetManager = assets,
-            assetDir = QwenModelRepository.ASSET_TOKENIZER_DIR,
-            tag = tag
-        )
-        val speakerCatalog = assets.open(repo.getEmbeddingAssetPath("speaker_ids.json")).use {
-            SpeakerCatalogLoader(tag).load(it)
-        }
-
-        cachedRepo = repo
-        cachedConfig = config
-        cachedTokenizer = tokenizer
-        cachedSpeakerCatalog = speakerCatalog
-        cachedAssetManager = assets
-    }
-
-    private fun initFromFiles(repo: QwenModelRepository) {
         val missing = repo.missingRequiredFiles()
         require(missing.isEmpty()) { "Missing required files: $missing" }
 
-        val config = QwenConfigLoader(tag).load(repo.getEmbeddingFile("config.json"))
-        val tokenizer = QwenTextTokenizer(tokenizerDir = repo.getTokenizerDir(), tag = tag)
-        val speakerCatalog = SpeakerCatalogLoader(tag).load(repo.getEmbeddingFile("speaker_ids.json"))
+        val config = configLoader.load(repo.getEmbeddingFile("config.json"))
+
+        val tokenizer = QwenTextTokenizer(
+            tokenizerDir = repo.getTokenizerDir(),
+            tag = tag
+        )
+
+        val speakerCatalog = SpeakerCatalogLoader(tag).load(
+            repo.getEmbeddingFile("speaker_ids.json")
+        )
 
         cachedRepo = repo
         cachedConfig = config
         cachedTokenizer = tokenizer
         cachedSpeakerCatalog = speakerCatalog
-        cachedAssetManager = null
     }
 
     fun run(
@@ -107,7 +86,6 @@ class QwenTtsPipeline(
         val config = requireNotNull(cachedConfig)
         val realTokenizer = requireNotNull(cachedTokenizer)
         val speakerCatalog = requireNotNull(cachedSpeakerCatalog)
-        val assets = cachedAssetManager
 
         val generateCodesRunner = QwenGenerateCodesRunner(tag)
         val vocoderRunner = QwenVocoderRunner(tag)
@@ -128,11 +106,7 @@ class QwenTtsPipeline(
         reportProgress(onProgress, 20, "Loading embeddings...")
 
         QwenEmbeddingRepository(repo, tag).use { embeddingRepository ->
-            if (assets != null) {
-                embeddingRepository.loadRequiredCoreEmbeddingsFromAssets(assets)
-            } else {
-                embeddingRepository.loadRequiredCoreEmbeddings()
-            }
+            embeddingRepository.loadRequiredCoreEmbeddings()
 
             for ((chunkIndex, inputText) in chunks.withIndex()) {
                 val chunkBaseProgress = 20 + ((chunkIndex * 55) / totalChunks)
@@ -170,8 +144,7 @@ class QwenTtsPipeline(
                     maxNewTokens = estimatedMaxSteps,
                     temperature = temperature,
                     topK = topK,
-                    repetitionPenalty = repetitionPenalty,
-                    assetManager = assets
+                    repetitionPenalty = repetitionPenalty
                 )
 
                 reportProgress(
@@ -190,24 +163,15 @@ class QwenTtsPipeline(
                     "Running vocoder for chunk ${chunkIndex + 1}/$totalChunks"
                 )
 
-                val vocoderInput = QwenVocoderRunner.VocoderInput(
-                    codes = generateCodesResult.codes,
-                    timeSteps = generateCodesResult.timeSteps,
-                    codebooks = generateCodesResult.codebooks
+                val vocoderFile = repo.getModelFile("vocoder.onnx")
+                val vocoderResult = vocoderRunner.run(
+                    modelFile = vocoderFile,
+                    input = QwenVocoderRunner.VocoderInput(
+                        codes = generateCodesResult.codes,
+                        timeSteps = generateCodesResult.timeSteps,
+                        codebooks = generateCodesResult.codebooks
+                    )
                 )
-
-                val vocoderResult = if (assets != null) {
-                    vocoderRunner.run(
-                        assetManager = assets,
-                        assetPath = repo.getModelAssetPath("vocoder.onnx"),
-                        input = vocoderInput
-                    )
-                } else {
-                    vocoderRunner.run(
-                        modelFile = repo.getModelFile("vocoder.onnx"),
-                        input = vocoderInput
-                    )
-                }
 
                 val normalizedChunkWaveform = normalizeWaveform(
                     waveform = vocoderResult.waveform,
@@ -260,13 +224,10 @@ class QwenTtsPipeline(
 
     fun loadAvailableSpeakers(): List<String> {
         val repo = QwenModelRepository(context)
-        return if (repo.isAssetBundlePresent(context.assets)) {
-            context.assets.open(repo.getEmbeddingAssetPath("speaker_ids.json")).use {
-                SpeakerCatalogLoader(tag).load(it).names()
-            }
-        } else {
-            SpeakerCatalogLoader(tag).load(repo.getEmbeddingFile("speaker_ids.json")).names()
-        }
+        val speakerCatalog = SpeakerCatalogLoader(tag).load(
+            repo.getEmbeddingFile("speaker_ids.json")
+        )
+        return speakerCatalog.names()
     }
 
     private fun reportProgress(
@@ -362,6 +323,5 @@ class QwenTtsPipeline(
         cachedConfig = null
         cachedTokenizer = null
         cachedSpeakerCatalog = null
-        cachedAssetManager = null
     }
 }
