@@ -1,32 +1,3 @@
-"""
-Extract embedding weights and projection layers as NumPy arrays.
-
-Saves raw tensors that the C# runtime loads directly — no ONNX needed
-for these since they are pure lookup tables and small linear layers.
-
-All tensor shapes are determined by the model config, so this script works
-for both 0.6B and 1.7B model variants without modification.
-
-Outputs (all .npy, shapes vary by model variant):
-  embeddings/
-    text_embedding.npy              — (text_vocab, text_hidden_size) float32
-    text_projection_fc1_weight.npy  — (text_hidden_size, text_hidden_size) float32
-    text_projection_fc1_bias.npy    — (text_hidden_size,) float32
-    text_projection_fc2_weight.npy  — (talker_hidden, text_hidden_size) float32
-    text_projection_fc2_bias.npy    — (talker_hidden,) float32
-    talker_codec_embedding.npy      — (talker_vocab, talker_hidden) float32
-    cp_codec_embedding_{0..N}.npy   — (cp_vocab, cp_hidden) float32
-    cp_projection_weight.npy        — (cp_hidden, talker_hidden) float32  [1.7B only]
-    cp_projection_bias.npy          — (cp_hidden,) float32                [1.7B only]
-    codec_head_weight.npy           — (talker_vocab, talker_hidden) float32
-    speaker_ids.json                — {"speaker_name": [id0, id1, ...], ...}
-    config.json                     — special token IDs and model dimensions
-
-Usage:
-  python export_embeddings.py --model-dir models/Qwen3-TTS-0.6B-CustomVoice --output-dir onnx/embeddings
-  python export_embeddings.py --model-dir models/Qwen3-TTS-1.7B-CustomVoice --output-dir onnx_1.7b/embeddings
-"""
-
 import argparse
 import json
 import sys
@@ -34,9 +5,9 @@ from pathlib import Path
 
 from export_utils import configure_output_encoding
 
-# Apply compatibility patches BEFORE importing qwen_tts.
+
 try:
-    import compat_patches  # noqa: F401
+    import compat_patches
 except ImportError:
     print("WARNING: compat_patches.py not found. Model loading may fail with newer transformers.")
 
@@ -61,7 +32,7 @@ def save_tensor(tensor, path):
 def main():
     configure_output_encoding()
     parser = argparse.ArgumentParser(
-        description="Extract embedding weights as NumPy arrays for C# inference"
+        description="Extract embedding weights as NumPy arrays for Python3 inference"
     )
     parser.add_argument(
         "--model-dir",
@@ -100,13 +71,10 @@ def main():
     talker = model.talker
     config = model.config
     talker_config = config.talker_config
-
-    # ── Text embedding (BPE vocab → 2048-dim) ────────────────────────────
     print("\nText embedding:")
-    text_emb = talker.model.text_embedding.weight  # (text_vocab, text_hidden_size)
+    text_emb = talker.model.text_embedding.weight
     save_tensor(text_emb, output_dir / "text_embedding.npy")
 
-    # ── Text projection (2048 → 1024 via SiLU MLP) ───────────────────────
     print("\nText projection (ResizeMLP):")
     proj = talker.text_projection
     save_tensor(proj.linear_fc1.weight, output_dir / "text_projection_fc1_weight.npy")
@@ -114,25 +82,15 @@ def main():
     save_tensor(proj.linear_fc2.weight, output_dir / "text_projection_fc2_weight.npy")
     save_tensor(proj.linear_fc2.bias, output_dir / "text_projection_fc2_bias.npy")
 
-    # ── Talker codec embedding (group 0 + control tokens) ────────────────
-    # This embedding table covers codec tokens (0..2047) AND special tokens
-    # (EOS, think, pad, bos, speaker IDs, language IDs, etc. up to 3071).
     print("\nTalker codec embedding (group 0):")
-    codec_emb = talker.model.codec_embedding.weight  # (3072, 1024)
+    codec_emb = talker.model.codec_embedding.weight
     save_tensor(codec_emb, output_dir / "talker_codec_embedding.npy")
 
-    # ── Code Predictor codec embeddings (groups 1-31) ─────────────────────
-    # 31 separate embedding tables, each (2048, 1024).
-    # cp_codec_embedding_0 → codebook group 1
-    # cp_codec_embedding_30 → codebook group 31
     print("\nCode Predictor codec embeddings (31 tables):")
     cp_embeddings = talker.code_predictor.model.codec_embedding
     for i, emb in enumerate(cp_embeddings):
         save_tensor(emb.weight, output_dir / f"cp_codec_embedding_{i}.npy")
 
-    # ── Code Predictor projection (1.7B only: Linear 2048→1024) ─────────
-    # For 0.6B this attribute doesn't exist (talker_hidden == cp_hidden).
-    # C# applies this projection externally for the CP prefill step.
     cp = talker.code_predictor
     if hasattr(cp, "small_to_mtp_projection") and cp.small_to_mtp_projection is not None:
         proj_layer = cp.small_to_mtp_projection
@@ -146,21 +104,16 @@ def main():
     else:
         print("\nCode Predictor projection: not present (0.6B model, skip)")
 
-    # ── Codec head (Talker output projection) ─────────────────────────────
     print("\nCodec head:")
-    codec_head_w = talker.codec_head.weight  # (3072, 1024)
+    codec_head_w = talker.codec_head.weight
     save_tensor(codec_head_w, output_dir / "codec_head_weight.npy")
 
-    # ── Speaker ID mapping ────────────────────────────────────────────────
-    # For CustomVoice, speakers map to token IDs in the Talker codec embedding.
-    # The embedding for speaker X is: talker_codec_embedding[spk_id[X]]
     print("\nSpeaker IDs:")
     spk_ids = talker_config.spk_id or {}
     with open(output_dir / "speaker_ids.json", "w") as f:
         json.dump(spk_ids, f, indent=2)
     print(f"  ✓ speaker_ids.json  ({len(spk_ids)} speakers)")
 
-    # ── Config metadata for C# runtime ────────────────────────────────────
     print("\nConfig:")
     meta = {
         "talker": {

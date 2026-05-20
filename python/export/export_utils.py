@@ -1,14 +1,3 @@
-"""
-Shared validation utilities for Qwen3-TTS export scripts.
-
-Provides input validation, repo ID checking, and model directory verification
-to catch user errors early with clear messages instead of cryptic PyTorch errors.
-
-Used by: export_lm.py, export_embeddings.py, export_vocoder.py,
-         export_speech_tokenizer.py, export_speaker_encoder.py
-"""
-
-import json
 import os
 import re
 import sys
@@ -16,20 +5,12 @@ from pathlib import Path
 
 
 def configure_output_encoding():
-    """Ensure stdout/stderr can handle Unicode on all platforms (e.g., GBK Windows)."""
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Supported model repo patterns
-# ═══════════════════════════════════════════════════════════════════════════
-
-# These are the HuggingFace repo IDs that contain the correct model architecture
-# for our export scripts. The scripts rely on qwen_tts.core.models which expect
-# specific config attributes (talker_config, code_predictor_config, etc.).
 SUPPORTED_CUSTOMVOICE_REPOS = [
     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
     "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
@@ -50,8 +31,6 @@ ALL_SUPPORTED_REPOS = (
     + SUPPORTED_TOKENIZER_REPOS
 )
 
-# Repo IDs that look like Qwen TTS but are NOT the 12Hz variants our scripts expect.
-# These use different architectures and will fail with confusing errors.
 KNOWN_UNSUPPORTED_REPOS = [
     "Qwen/Qwen3-TTS-0.6B-CustomVoice",
     "Qwen/Qwen3-TTS-1.7B-CustomVoice",
@@ -59,19 +38,12 @@ KNOWN_UNSUPPORTED_REPOS = [
     "Qwen/Qwen3-TTS-1.7B-Base",
 ]
 
-# Pattern for valid HuggingFace repo IDs: org/model-name
 HF_REPO_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Validation functions
-# ═══════════════════════════════════════════════════════════════════════════
-
 class ExportValidationError(Exception):
-    """Raised when export script input validation fails."""
-
     def __init__(self, message: str, suggestion: str | None = None):
-        self.suggestion = suggestion
+        self.suggestion: str | None = suggestion
         full_msg = message
         if suggestion:
             full_msg += f"\n\nSuggestion: {suggestion}"
@@ -79,17 +51,15 @@ class ExportValidationError(Exception):
 
 
 def is_hf_repo_id(path_or_repo: str) -> bool:
-    """Check if a string looks like a HuggingFace repo ID (org/model) vs a local path."""
     if os.path.sep in path_or_repo or (os.name == "nt" and "\\" in path_or_repo):
         return False
     if path_or_repo.startswith((".", "/", "~")):
         return False
     if ":" in path_or_repo and len(path_or_repo) > 1 and path_or_repo[1] == ":":
-        return False  # Windows drive letter (C:\...)
+        return False 
     if not HF_REPO_PATTERN.match(path_or_repo):
         return False
-    # If the "org" part looks like a filesystem path component, it's probably a path.
-    # Real HF orgs are like "Qwen", "elbruno", "meta-llama" — not "models", "src", etc.
+
     org = path_or_repo.split("/")[0]
     path_like_prefixes = {
         "models", "model", "src", "python", "data", "output", "outputs",
@@ -103,19 +73,6 @@ def is_hf_repo_id(path_or_repo: str) -> bool:
 
 
 def validate_model_dir(model_dir: str, require_config: bool = True) -> Path:
-    """Validate that model_dir is a valid local directory with model files.
-
-    Args:
-        model_dir: Path to the model directory (local path or HF repo ID).
-        require_config: If True, check for config.json in the directory.
-
-    Returns:
-        Resolved Path to the model directory.
-
-    Raises:
-        ExportValidationError: If the directory is invalid.
-    """
-    # Check if user accidentally passed a HuggingFace repo ID
     if is_hf_repo_id(model_dir):
         suggestion = _suggest_for_repo_id(model_dir)
         raise ExportValidationError(
@@ -151,26 +108,12 @@ def validate_model_dir(model_dir: str, require_config: bool = True) -> Path:
 
 
 def validate_repo_id(repo_id: str, script_type: str = "lm") -> str:
-    """Validate a HuggingFace repo ID for use with export scripts.
-
-    Args:
-        repo_id: The HuggingFace repo ID to validate.
-        script_type: Which export script is calling — "lm", "embeddings",
-                     "vocoder", "speech_tokenizer", "speaker_encoder".
-
-    Returns:
-        The validated repo_id if supported.
-
-    Raises:
-        ExportValidationError: If the repo ID is not supported.
-    """
     if not HF_REPO_PATTERN.match(repo_id):
         raise ExportValidationError(
             f"'{repo_id}' is not a valid HuggingFace repo ID.\n"
             f"Expected format: org/model-name (e.g., Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice)",
         )
 
-    # Check for known unsupported repos (the non-12Hz variants)
     if repo_id in KNOWN_UNSUPPORTED_REPOS:
         supported = _get_supported_for_type(script_type)
         raise ExportValidationError(
@@ -185,17 +128,6 @@ def validate_repo_id(repo_id: str, script_type: str = "lm") -> str:
 
 
 def validate_model_config_for_lm_export(config) -> dict:
-    """Validate that a loaded model config has the attributes needed for LM export.
-
-    Args:
-        config: A Qwen3TTSConfig object loaded from from_pretrained().
-
-    Returns:
-        Dict with validated dimension info.
-
-    Raises:
-        ExportValidationError: If required config attributes are missing.
-    """
     errors = []
 
     if not hasattr(config, "talker_config"):
@@ -235,14 +167,6 @@ def validate_model_config_for_lm_export(config) -> dict:
 
 
 def validate_output_dir(output_dir: str) -> Path:
-    """Validate and create the output directory for exported models.
-
-    Args:
-        output_dir: Path for ONNX output files.
-
-    Returns:
-        Resolved Path to the output directory.
-    """
     path = Path(output_dir)
     try:
         path.mkdir(parents=True, exist_ok=True)
@@ -253,14 +177,8 @@ def validate_output_dir(output_dir: str) -> Path:
     return path.resolve()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Internal helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
 def _suggest_for_repo_id(repo_id: str) -> str:
-    """Generate a helpful suggestion when user provides a repo ID instead of a path."""
     if repo_id in KNOWN_UNSUPPORTED_REPOS:
-        # Map non-12Hz to 12Hz
         corrected = repo_id.replace("Qwen/Qwen3-TTS-", "Qwen/Qwen3-TTS-12Hz-")
         return (
             f"The repo '{repo_id}' uses a non-12Hz architecture that is incompatible\n"
@@ -287,15 +205,12 @@ def _suggest_for_repo_id(repo_id: str) -> str:
 
 
 def _repo_to_local(repo_id: str) -> str:
-    """Convert a HuggingFace repo ID to the expected local directory name."""
     name = repo_id.split("/")[-1]
-    # Remove the "12Hz-" prefix that appears in repo IDs but not local dirs
     name = name.replace("12Hz-", "")
     return name
 
 
 def _get_supported_for_type(script_type: str) -> list[str]:
-    """Return supported repo IDs for a given script type."""
     if script_type in ("vocoder", "speech_tokenizer"):
         return SUPPORTED_TOKENIZER_REPOS
     if script_type == "speaker_encoder":

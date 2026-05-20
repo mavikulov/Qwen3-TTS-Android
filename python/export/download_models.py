@@ -1,21 +1,3 @@
-"""
-Download Qwen3-TTS model weights from Hugging Face Hub.
-
-Models downloaded:
-  - Qwen/Qwen3-TTS-0.6B-CustomVoice  (0.6B — CustomVoice variant)
-  - Qwen/Qwen3-TTS-12Hz-0.6B-Base    (0.6B — Base variant with voice cloning)
-  - Qwen/Qwen3-TTS-1.7B-CustomVoice  (1.7B — CustomVoice variant with instruct control)
-  - Qwen/Qwen3-TTS-12Hz-1.7B-Base    (1.7B — Base variant with voice cloning)
-  - Qwen/Qwen3-TTS-Tokenizer-12Hz    (vocoder / speech tokenizer, shared by all)
-
-Usage:
-  python download_models.py                              # Download all 0.6B models (default)
-  python download_models.py --model customvoice          # Download 0.6B CustomVoice only
-  python download_models.py --model customvoice-1.7b     # Download 1.7B CustomVoice only
-  python download_models.py --model all-1.7b             # Download all 1.7B models
-  python download_models.py --model everything           # Download all variants
-"""
-
 import argparse
 import os
 from pathlib import Path

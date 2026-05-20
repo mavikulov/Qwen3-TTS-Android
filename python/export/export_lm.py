@@ -1,29 +1,3 @@
-"""
-Export Talker LM (prefill + decode) and Code Predictor to ONNX.
-
-Creates three ONNX models:
-  1. talker_prefill.onnx  — Talker LM prefill (full sequence, produces KV cache)
-  2. talker_decode.onnx   — Talker LM single-step decode (with KV cache I/O)
-  3. code_predictor.onnx  — Code Predictor (codebook generation)
-
-All dimensions are read from the model config, so both 0.6B and 1.7B variants
-are supported without code changes.
-
-Usage:
-  python export_lm.py --model-dir models/Qwen3-TTS-0.6B-CustomVoice --output-dir onnx/
-  python export_lm.py --model-dir models/Qwen3-TTS-1.7B-CustomVoice --output-dir onnx_1.7b/
-
-Requirements:
-  pip install -r requirements.txt
-  Requires: qwen-tts, torch, transformers>=4.57.3, onnx, optimum[onnx]
-
-Note:
-  This script includes compatibility patches for transformers 4.57+/5.5+ that
-  fix vmap-based masking crashes during ONNX tracing. If you see errors like
-  "RuntimeError: invalid unordered_map<K, T> key", ensure compat_patches.py
-  is present in the same directory.
-"""
-
 import argparse
 import os
 import sys
@@ -31,11 +5,8 @@ from pathlib import Path
 
 from export_utils import configure_output_encoding
 
-# Apply compatibility patches BEFORE importing qwen_tts or model code.
-# These fix vmap masking, RoPE init, sdpa_mask, torch.diff, and other
-# incompatibilities between qwen_tts and newer transformers versions.
 try:
-    import compat_patches  # noqa: F401
+    import compat_patches
 except ImportError:
     print("WARNING: compat_patches.py not found. Export may fail with newer transformers.")
     print("         Ensure compat_patches.py is in the same directory as this script.")
@@ -82,16 +53,7 @@ def read_model_dims(config):
     return dims
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Talker LM Prefill Wrapper
-# ═══════════════════════════════════════════════════════════════════════════
-
 class TalkerPrefillWrapper(nn.Module):
-    """Wraps the Talker LM for prefill export.
-
-    Dimensions vary by model variant (0.6B: hidden=1024, 1.7B: hidden=2048).
-    """
-
     def __init__(self, talker, num_layers):
         super().__init__()
         self.model = talker.model
@@ -117,13 +79,7 @@ class TalkerPrefillWrapper(nn.Module):
         return (logits, hidden_states, *flat_kv)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Talker LM Decode Wrapper
-# ═══════════════════════════════════════════════════════════════════════════
-
 class TalkerDecodeWrapper(nn.Module):
-    """Wraps the Talker LM for single-token decode export."""
-
     def __init__(self, talker, num_layers):
         super().__init__()
         self.model = talker.model
@@ -152,22 +108,10 @@ class TalkerDecodeWrapper(nn.Module):
         return (logits, hidden_states, present_keys, present_values)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Code Predictor Wrapper
-# ═══════════════════════════════════════════════════════════════════════════
-
 class CodePredictorWrapper(nn.Module):
-    """Wraps the Code Predictor for ONNX export.
-
-    Stacks all lm_head weights into a single tensor for indexed access.
-    """
-
     def __init__(self, code_predictor, num_layers):
         super().__init__()
         self.model = code_predictor.model
-        # NOTE: small_to_mtp_projection is NOT stored here — it's exported
-        # separately as .npy files via export_embeddings.py. Storing it as
-        # a submodule would leak its weights into the ONNX graph.
         self.num_layers = num_layers
 
         all_weights = torch.stack(
@@ -176,10 +120,6 @@ class CodePredictorWrapper(nn.Module):
         self.register_buffer("lm_head_weights", all_weights)
 
     def forward(self, inputs_embeds, generation_steps, past_keys, past_values):
-        # Projection is NOT applied here — C# applies it externally.
-        # For 1.7B (where cp_codec_embedding dim > cp_hidden), C# must project
-        # ALL CP inputs (prefill AND decode steps) from talker space to CP space.
-
         cache = DynamicCache()
         for i in range(self.num_layers):
             cache.update(past_keys[i], past_values[i], i)
@@ -203,10 +143,6 @@ class CodePredictorWrapper(nn.Module):
 
         return (logits, present_keys, present_values)
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ONNX export helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 def _kv_input_names(prefix, num_layers):
     """Generate input names for past KV cache tensors."""
@@ -239,7 +175,7 @@ def export_talker_prefill(talker, output_dir, device, dims):
     print("Exporting talker_prefill.onnx ...")
     wrapper = TalkerPrefillWrapper(talker, dims["talker_num_layers"]).eval().to(device)
 
-    B, T = 1, 8  # dummy dimensions
+    B, T = 1, 8
     dummy_inputs = (
         torch.randn(B, T, dims["talker_hidden"], device=device),
         torch.ones(B, T, dtype=torch.int64, device=device),
@@ -258,7 +194,7 @@ def export_talker_prefill(talker, output_dir, device, dims):
         "logits": {0: "batch_size"},
         "hidden_states": {0: "batch_size", 1: "sequence_length"},
     }
-    # KV outputs have dynamic batch and sequence dims
+    
     for name in kv_out_names:
         dynamic_axes[name] = {0: "batch_size", 2: "sequence_length"}
 
@@ -276,21 +212,16 @@ def export_talker_prefill(talker, output_dir, device, dims):
 
 
 def export_talker_decode(talker, output_dir, device, dims):
-    """Export Talker LM decode-step model to ONNX."""
     print("Exporting talker_decode.onnx ...")
     wrapper = TalkerDecodeWrapper(talker, dims["talker_num_layers"]).eval().to(device)
-
-    B, T_past = 1, 8  # dummy past length
-
     dummy_embeds = torch.randn(B, 1, dims["talker_hidden"], device=device)
     dummy_mask = torch.ones(B, T_past + 1, dtype=torch.int64, device=device)
     dummy_pos = torch.zeros(3, B, 1, dtype=torch.int64, device=device)
-
-    # Stacked KV cache: (num_layers, B, num_kv_heads, T, head_dim)
     dummy_past_keys = torch.randn(
         dims["talker_num_layers"], B, dims["talker_num_kv_heads"],
         T_past, dims["talker_head_dim"], device=device
     )
+    
     dummy_past_values = torch.randn(
         dims["talker_num_layers"], B, dims["talker_num_kv_heads"],
         T_past, dims["talker_head_dim"], device=device
@@ -327,21 +258,18 @@ def export_talker_decode(talker, output_dir, device, dims):
 
 
 def export_code_predictor(talker, output_dir, device, dims):
-    """Export Code Predictor model to ONNX."""
     print("Exporting code_predictor.onnx ...")
     wrapper = CodePredictorWrapper(talker.code_predictor, dims["cp_num_layers"]).eval().to(device)
 
-    B, S = 1, 2  # prefill: [talker_hidden, group_0_embed]
-    T_past = 2   # small past length for export tracing
-
+    B, S = 1, 2
+    T_past = 2
     dummy_embeds = torch.randn(B, S, dims["cp_hidden"], device=device)
     dummy_steps = torch.tensor([0], dtype=torch.int64, device=device)
-
-    # Stacked KV cache: (num_layers, B, num_kv_heads, T_past, head_dim)
     dummy_past_keys = torch.randn(
         dims["cp_num_layers"], B, dims["cp_num_kv_heads"],
         T_past, dims["cp_head_dim"], device=device
     )
+    
     dummy_past_values = torch.randn(
         dims["cp_num_layers"], B, dims["cp_num_kv_heads"],
         T_past, dims["cp_head_dim"], device=device
@@ -375,10 +303,6 @@ def export_code_predictor(talker, output_dir, device, dims):
     print("  ✓ code_predictor.onnx")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Main
-# ═══════════════════════════════════════════════════════════════════════════
-
 def main():
     configure_output_encoding()
     parser = argparse.ArgumentParser(
@@ -405,8 +329,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # Validate model directory — catch common mistake of passing HuggingFace
-    # repo IDs instead of local paths
     model_dir = args.model_dir
     if not os.path.isdir(model_dir):
         print(f"ERROR: Model directory not found: {model_dir}")
@@ -427,15 +349,12 @@ def main():
 
     print("Model dimensions (from config):")
     dims = read_model_dims(config)
-
-    # Use vmap-free masking for ONNX trace compatibility.
-    # The vmap-based masking in transformers 4.57+ crashes during
-    # torch.onnx.export with: RuntimeError: invalid unordered_map<K, T> key
     attn_impl = "sdpa"
+    
     try:
         from compat_patches import VMAP_WORKAROUND, patch_attention_for_export
         if VMAP_WORKAROUND:
-            attn_impl = "sdpa"  # will be patched to vmap-free after loading
+            attn_impl = "sdpa"
             print(f"  Using vmap-free attention: {VMAP_WORKAROUND}")
         else:
             attn_impl = "eager"
@@ -452,14 +371,11 @@ def main():
     )
     model.eval()
 
-    # Patch attention for vmap-free ONNX export
     try:
         from compat_patches import patch_attention_for_export
-        # Patch Talker LM layers
         patch_attention_for_export(
             model.talker.model, config=model.talker.model.config
         )
-        # Patch Code Predictor layers
         patch_attention_for_export(
             model.talker.code_predictor.model,
             config=model.talker.code_predictor.model.config,

@@ -1,20 +1,5 @@
-"""
-Export ECAPA-TDNN Speaker Encoder to ONNX.
-
-Creates:
-  speaker_encoder.onnx — Speaker encoder for voice cloning (Base model only)
-
-Input:  mel_spectrogram (1, T_mel, 128) float32  — 128-dim mel-spectrogram (time-first)
-Output: speaker_embedding (1, 1024) float32       — x-vector speaker embedding
-
-Usage:
-  python export_speaker_encoder.py --model-dir models/Qwen3-TTS-0.6B-Base --output-dir onnx_base/
-"""
-
 import argparse
 from pathlib import Path
-
-from export_utils import configure_output_encoding
 
 import numpy as np
 import torch
@@ -24,13 +9,13 @@ import onnxruntime as ort
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 
+from export_utils import configure_output_encoding
+
 
 OPSET_VERSION = 17
 
 
 class SpeakerEncoderWrapper(nn.Module):
-    """Wraps the ECAPA-TDNN speaker encoder for clean ONNX export."""
-
     def __init__(self, speaker_encoder):
         super().__init__()
         self.encoder = speaker_encoder
@@ -65,9 +50,6 @@ def export_speaker_encoder(model_dir: str, output_dir: str):
     se = model.speaker_encoder
     wrapper = SpeakerEncoderWrapper(se)
     wrapper.eval()
-
-    # Dummy input: (batch=1, T_mel=300, n_mels=128) — ~2.5s of audio at 24kHz/256 hop
-    # The encoder internally transposes to (B, n_mels, T_mel) for Conv1d
     n_mels = config.speaker_encoder_config.mel_dim
     dummy_mel = torch.randn(1, 300, n_mels)
 
@@ -76,7 +58,6 @@ def export_speaker_encoder(model_dir: str, output_dir: str):
         ref_output = wrapper(dummy_mel)
     print(f"PyTorch output shape: {ref_output.shape}")
 
-    # Export to ONNX
     onnx_path = output_path / "speaker_encoder.onnx"
     print(f"\nExporting to {onnx_path} ...")
     torch.onnx.export(
@@ -91,9 +72,8 @@ def export_speaker_encoder(model_dir: str, output_dir: str):
             "speaker_embedding": {0: "batch"},
         },
     )
+    
     print(f"  ✓ Exported {onnx_path.name}")
-
-    # Validate ONNX model
     print("\nValidating ONNX model ...")
     onnx_model = onnx.load(str(onnx_path))
     onnx.checker.check_model(onnx_model)
@@ -104,12 +84,10 @@ def export_speaker_encoder(model_dir: str, output_dir: str):
     ort_output = sess.run(None, {"mel_spectrogram": dummy_mel.numpy()})[0]
     ort_tensor = torch.from_numpy(ort_output)
 
-    # Cosine similarity
     cos_sim = torch.nn.functional.cosine_similarity(
         ref_output.flatten(), ort_tensor.flatten(), dim=0
     ).item()
 
-    # Max absolute error
     max_err = (ref_output - ort_tensor).abs().max().item()
 
     print(f"  Cosine similarity: {cos_sim:.6f}")
@@ -120,7 +98,6 @@ def export_speaker_encoder(model_dir: str, output_dir: str):
     else:
         print("  ✗ FAIL: Cosine similarity too low!")
 
-    # Test with different sequence lengths
     print("\nTesting dynamic time axis ...")
     for t in [100, 500, 1000]:
         test_mel = torch.randn(1, t, n_mels)
